@@ -25,7 +25,7 @@ describe('Публічне API терміналу: Express + репозитор�
     ).toEqual([{ lang: 'en' }, { lang: 'uk' }]);
   });
 
-  it('будує маршрут від терміналу до події, а без OSRM — запасну пряму лінію', async () => {
+  it('@L4 будує маршрут від терміналу до події, а без OSRM — запасну пряму лінію', async () => {
     const spy = vi.spyOn(fakeRouting, 'route');
     const online = makeTestApp(fakeRouting);
     const id = online.repo.create(opera()).id;

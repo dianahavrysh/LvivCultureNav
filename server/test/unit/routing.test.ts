@@ -57,7 +57,7 @@ describe('сервіс маршрутів OSRM (US-05, US-06, REQ-2.3)', () => {
     expect(new Headers(init?.headers).get('User-Agent')).toBe('LCN-test');
   });
 
-  it('при будь-якому збої OSRM повертає пряму лінію і не кешує її', async () => {
+  it('@L4 при будь-якому збої OSRM повертає пряму лінію і не кешує її', async () => {
     const failures = [
       () => Promise.resolve(json({}, 503)), // помилка HTTP
       () => Promise.reject(new TypeError('fetch failed')), // немає мережі

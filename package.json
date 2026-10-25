@@ -21,6 +21,9 @@
     "test": "npm run test:unit && npm run test:integration",
     "test:unit": "vitest run --project server-unit --project client-unit",
     "test:integration": "vitest run --project server-integration",
+    "test:fault-tolerance": "vitest run --project server-unit --project server-integration --testNamePattern @L4",
+    "test:l3": "npm run test:l3 -w @lcn/e2e",
+    "test:l5": "npm run test:l5 -w @lcn/e2e",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "npm run test -w e2e",
     "test:all": "npm run test && npm run test:e2e"

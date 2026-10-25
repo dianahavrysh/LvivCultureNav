@@ -1,14 +1,25 @@
-# Безперервна інтеграція (практика XP «Continuous Integration»):
-# кожен push і pull request проходить стандарт коду, типи та всі три рівні тестів.
-name: CI
+name: Pentagon CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, master, dev, test, pre-prod, prod]
   pull_request:
 
 jobs:
-  build-and-test:
+  plan:
+    name: Визначення середовища
+    runs-on: ubuntu-latest
+    outputs:
+      env: ${{ steps.pick.outputs.env }}
+    steps:
+      - id: pick
+        env:
+          NAME: ${{ github.event_name == 'pull_request' && github.base_ref || github.ref_name }}
+        run: echo "env=$NAME" >> "$GITHUB_OUTPUT"
+
+  static:
+    name: Lint + Typecheck
+    needs: plan
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -19,20 +30,69 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run typecheck
-      - name: Unit tests
-        run: npm run test:unit
-      - name: Integration tests
-        run: npm run test:integration
-      - name: Coverage (unit + integration)
-        run: npm run test:coverage
+
+  l1-l2:
+    name: L1–L2 Unit + Local integration
+    needs: static
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run test:unit
+      - run: npm run test:integration
+      - run: npm run test:coverage
       - uses: actions/upload-artifact@v4
         with:
           name: coverage-report
           path: coverage
+
+  l3:
+    name: L3 Global integration (DEV, TEST, PRE-PROD)
+    needs: [plan, l1-l2]
+    if: needs.plan.outputs.env != 'prod'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run test:l3
+
+  l4:
+    name: L4 Fault tolerance (TEST, PRE-PROD)
+    needs: [plan, l3]
+    if: contains(fromJSON('["test","pre-prod","main","master"]'), needs.plan.outputs.env)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run test:fault-tolerance
+
+  l5:
+    name: L5 End-to-end (PRE-PROD)
+    needs: [plan, l4]
+    if: contains(fromJSON('["pre-prod","main","master"]'), needs.plan.outputs.env)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
       - run: npx playwright install --with-deps chromium
         working-directory: e2e
-      - name: E2E tests
-        run: npm run test:e2e
+      - run: npm run test:l5
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

@@ -1,7 +1,7 @@
 import { ADMIN_KEY } from '../playwright.config.ts';
 import { expect, test } from '../support/fixtures.ts';
 
-test.describe('Адміністратор керує подіями на /admin (REQ-1.1)', () => {
+test.describe('@L5 Адміністратор керує подіями на /admin (REQ-1.1)', () => {
   // Прибирає тестову подію, навіть якщо сценарій упав посередині, щоб не впливати на інші тести
   test.afterEach(async ({ request }) => {
     const headers = { 'X-Admin-Key': ADMIN_KEY };
