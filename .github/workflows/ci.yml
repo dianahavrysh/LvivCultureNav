@@ -1,14 +1,20 @@
-name: Pentagon CI
+name: Pentagon CI/CD
 
 on:
   push:
     branches: [main, master, dev, test, pre-prod, prod]
   pull_request:
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  APP_PORT: "3000"
+  HEALTH_PATH: "/"
 
 jobs:
   plan:
     name: Визначення середовища
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       env: ${{ steps.pick.outputs.env }}
     steps:
@@ -18,9 +24,9 @@ jobs:
         run: echo "env=$NAME" >> "$GITHUB_OUTPUT"
 
   static:
-    name: Lint + Typecheck
+    name: Lint + Typecheck + Build
     needs: plan
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -30,11 +36,13 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run typecheck
+      - name: Build
+        run: npm run build --if-present
 
-  l1-l2:
+  l1_l2:
     name: L1–L2 Unit + Local integration
     needs: static
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -42,9 +50,12 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: npm run test:unit
-      - run: npm run test:integration
-      - run: npm run test:coverage
+      - name: L1 — Unit tests
+        run: npm run test:unit
+      - name: L2 — Local integration tests
+        run: npm run test:integration
+      - name: Coverage (L1 + L2)
+        run: npm run test:coverage
       - uses: actions/upload-artifact@v4
         with:
           name: coverage-report
@@ -52,9 +63,9 @@ jobs:
 
   l3:
     name: L3 Global integration (DEV, TEST, PRE-PROD)
-    needs: [plan, l1-l2]
+    needs: [plan, l1_l2]
     if: needs.plan.outputs.env != 'prod'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -68,7 +79,7 @@ jobs:
     name: L4 Fault tolerance (TEST, PRE-PROD)
     needs: [plan, l3]
     if: contains(fromJSON('["test","pre-prod","main","master"]'), needs.plan.outputs.env)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -82,7 +93,7 @@ jobs:
     name: L5 End-to-end (PRE-PROD)
     needs: [plan, l4]
     if: contains(fromJSON('["pre-prod","main","master"]'), needs.plan.outputs.env)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -90,7 +101,8 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: npx playwright install --with-deps chromium
+      - name: Install Chromium for L5
+        run: npx playwright install --with-deps chromium
         working-directory: e2e
       - run: npm run test:l5
       - uses: actions/upload-artifact@v4
@@ -98,3 +110,88 @@ jobs:
         with:
           name: playwright-report
           path: e2e/playwright-report
+
+  # ---------- CD: формування артефакту (Docker-образ у GHCR) ----------
+  package:
+    name: CD Build & push Docker image
+    needs: [plan, l1_l2, l3, l4, l5]
+    if: ${{ !cancelled() && !failure() && github.event_name != 'pull_request' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository }}
+          tags: |
+            type=raw,value=${{ needs.plan.outputs.env }}
+            type=sha
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ---------- CD: розгортання у тестове середовище (гілка test) ----------
+  deploy_test:
+    name: CD Deploy to TEST
+    needs: [plan, package]
+    if: ${{ needs.plan.outputs.env == 'test' && needs.package.result == 'success' }}
+    runs-on: ubuntu-24.04
+    environment: test
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull and run image
+        env:
+          ADMIN_KEY: ${{ secrets.ADMIN_KEY }}
+          PARTNER_KEYS: ${{ secrets.PARTNER_KEYS }}
+        run: |
+          IMAGE="${REGISTRY}/${GITHUB_REPOSITORY,,}:test"
+          docker pull "$IMAGE"
+          docker run -d --name app -p ${APP_PORT}:${APP_PORT} \
+            -e ADMIN_KEY="$ADMIN_KEY" \
+            -e PARTNER_KEYS="$PARTNER_KEYS" \
+            -e OSRM_USER_AGENT="LvivCultureNav/0.1 (university lab project)" \
+            "$IMAGE"
+
+      - name: Smoke test
+        run: |
+          for i in $(seq 1 30); do
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:${APP_PORT}${HEALTH_PATH}" || true)
+            if [ "$CODE" != "000" ] && [ -n "$CODE" ]; then
+              echo "Application is up (HTTP $CODE)"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Application did not start in time"
+          docker logs app
+          exit 1
