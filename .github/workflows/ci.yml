@@ -155,7 +155,7 @@ jobs:
   deploy_test:
     name: CD Deploy to TEST
     needs: [plan, package]
-    if: ${{ needs.plan.outputs.env == 'test' && needs.package.result == 'success' }}
+    if: ${{ !cancelled() && !failure() && needs.plan.outputs.env == 'test' && needs.package.result == 'success' }}
     runs-on: ubuntu-24.04
     environment: test
     permissions:
