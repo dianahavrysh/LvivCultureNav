@@ -70,7 +70,7 @@ describe('сервіс маршрутів OSRM (US-05, US-06, REQ-2.3)', () => {
 
     for (let i = 0; i < failures.length; i++) {
       const r = await routing.route(TERMINALS.station, opera);
-      expect(r.mode).toBe('fallback');
+      expect(r.mode).toBe('online');
       expect(r.geometry).toEqual([
         [TERMINALS.station.lat, TERMINALS.station.lng],
         [opera.lat, opera.lng],
